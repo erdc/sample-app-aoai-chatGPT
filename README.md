@@ -1,6 +1,6 @@
 # ITL Financial Chat App with AOAI
 
-This repo contains code for the ITL Financial chat webapp that integrates with Azure OpenAI. Note: some portions of the app use preview APIs.
+This repo contains code for the POC ITL Financial chat webapp that integrates with Azure OpenAI. Note: some portions of the app use preview APIs.
 
 ## Prerequisites
 - An existing Azure OpenAI resource and model deployment of a chat model (e.g. `gpt-35-turbo-16k`, `gpt-4`)
