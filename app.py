@@ -4,6 +4,8 @@ import os
 import logging
 import uuid
 from dotenv import load_dotenv
+import requests
+# from openai import ChatCompletion, Choice, ChatCompletionMessage
 
 from quart import (
     Blueprint,
@@ -25,12 +27,12 @@ from backend.utils import format_as_ndjson, format_stream_response, generateFilt
 bp = Blueprint("routes", __name__, static_folder="static", template_folder="static")
 
 # UI configuration (optional)
-UI_TITLE = os.environ.get("UI_TITLE") or "Contoso"
+UI_TITLE = os.environ.get("UI_TITLE") or "ITL Financial Chatbot"
 UI_LOGO = os.environ.get("UI_LOGO")
 UI_CHAT_LOGO = os.environ.get("UI_CHAT_LOGO")
 UI_CHAT_TITLE = os.environ.get("UI_CHAT_TITLE") or "Start chatting"
-UI_CHAT_DESCRIPTION = os.environ.get("UI_CHAT_DESCRIPTION") or "This chatbot is configured to answer your questions"
-UI_FAVICON = os.environ.get("UI_FAVICON") or "/favicon.ico"
+UI_CHAT_DESCRIPTION = os.environ.get("UI_CHAT_DESCRIPTION") or "This chatbot is configured to answer questions about ITL's finances"
+UI_FAVICON = os.environ.get("UI_FAVICON") or "./assets/favicon-itl.ico"
 UI_SHOW_SHARE_BUTTON = os.environ.get("UI_SHOW_SHARE_BUTTON", "true").lower() == "true"
 
 def create_app():
@@ -54,8 +56,11 @@ async def assets(path):
 
 load_dotenv()
 
+HACKATHON_BACKEND_API = os.environ.get("HACKATHON_BACKEND_API")
+NUMBER_OF_CHAT_HISTORY_MESSAGES = os.environ.get("NUMBER_OF_CHAT_HISTORY_MESSAGES", 3)
+
 # Debug settings
-DEBUG = os.environ.get("DEBUG", "false")
+DEBUG = os.environ.get("DEBUG", "true")
 if DEBUG.lower() == "true":
     logging.basicConfig(level=logging.DEBUG)
 
@@ -65,7 +70,7 @@ USER_AGENT = "GitHubSampleWebApp/AsyncAzureOpenAI/1.0.0"
 DATASOURCE_TYPE = os.environ.get("DATASOURCE_TYPE", "AzureCognitiveSearch")
 SEARCH_TOP_K = os.environ.get("SEARCH_TOP_K", 5)
 SEARCH_STRICTNESS = os.environ.get("SEARCH_STRICTNESS", 3)
-SEARCH_ENABLE_IN_DOMAIN = os.environ.get("SEARCH_ENABLE_IN_DOMAIN", "true")
+SEARCH_ENABLE_IN_DOMAIN = os.environ.get("SEARCH_ENABLE_IN_DOMAIN", "false")
 
 # ACS Integration Settings
 AZURE_SEARCH_SERVICE = os.environ.get("AZURE_SEARCH_SERVICE")
@@ -86,7 +91,7 @@ AZURE_SEARCH_STRICTNESS = os.environ.get("AZURE_SEARCH_STRICTNESS", SEARCH_STRIC
 
 # AOAI Integration Settings
 AZURE_OPENAI_RESOURCE = os.environ.get("AZURE_OPENAI_RESOURCE")
-AZURE_OPENAI_MODEL = os.environ.get("AZURE_OPENAI_MODEL")
+AZURE_OPENAI_MODEL = os.environ.get("AZURE_OPENAI_MODEL", 'gpt-4')
 AZURE_OPENAI_ENDPOINT = os.environ.get("AZURE_OPENAI_ENDPOINT")
 AZURE_OPENAI_KEY = os.environ.get("AZURE_OPENAI_KEY")
 AZURE_OPENAI_TEMPERATURE = os.environ.get("AZURE_OPENAI_TEMPERATURE", 0)
@@ -94,9 +99,9 @@ AZURE_OPENAI_TOP_P = os.environ.get("AZURE_OPENAI_TOP_P", 1.0)
 AZURE_OPENAI_MAX_TOKENS = os.environ.get("AZURE_OPENAI_MAX_TOKENS", 1000)
 AZURE_OPENAI_STOP_SEQUENCE = os.environ.get("AZURE_OPENAI_STOP_SEQUENCE")
 AZURE_OPENAI_SYSTEM_MESSAGE = os.environ.get("AZURE_OPENAI_SYSTEM_MESSAGE", "You are an AI assistant that helps people find information.")
-AZURE_OPENAI_PREVIEW_API_VERSION = os.environ.get("AZURE_OPENAI_PREVIEW_API_VERSION", "2023-12-01-preview")
-AZURE_OPENAI_STREAM = os.environ.get("AZURE_OPENAI_STREAM", "true")
-AZURE_OPENAI_MODEL_NAME = os.environ.get("AZURE_OPENAI_MODEL_NAME", "gpt-35-turbo-16k") # Name of the model, e.g. 'gpt-35-turbo-16k' or 'gpt-4'
+AZURE_OPENAI_PREVIEW_API_VERSION = os.environ.get("AZURE_OPENAI_PREVIEW_API_VERSION", "2024-03-01-preview")
+AZURE_OPENAI_STREAM = os.environ.get("AZURE_OPENAI_STREAM", "false")
+AZURE_OPENAI_MODEL_NAME = os.environ.get("AZURE_OPENAI_MODEL_NAME", "gpt-4") # Name of the model, e.g. 'gpt-35-turbo-16k' or 'gpt-4'
 AZURE_OPENAI_EMBEDDING_ENDPOINT = os.environ.get("AZURE_OPENAI_EMBEDDING_ENDPOINT")
 AZURE_OPENAI_EMBEDDING_KEY = os.environ.get("AZURE_OPENAI_EMBEDDING_KEY")
 AZURE_OPENAI_EMBEDDING_NAME = os.environ.get("AZURE_OPENAI_EMBEDDING_NAME", "")
@@ -539,23 +544,136 @@ def prepare_model_args(request_body):
     return model_args
 
 async def send_chat_request(request):
+    # print("!!!Request", request, "Request!!!\n\n")
+    query = "Here is the user query - \n" + request['messages'][-1]['content']
+    chat_history = ""
+    # n = int(NUMBER_OF_CHAT_HISTORY_MESSAGES)
+    n = 5
+    num_chat_history = n if n < (len(request['messages']) - 1) else (len(request['messages']) - 1)
+    chat_history = []
+    i = 0
+    count = 0
+    for m in request['messages'][::-1]:
+        if count and m:  
+            chat_history.append(m['role'] + ": " + m['content'] + "\n")
+            # j = 1
+            # while not request['messages'][-(count - j)]:
+            #     j +=1
+            # chat_history += request['messages'][-(count - j)]['role'] + ": " + request['messages'][-(count - j)]['content'] + "\n"
+            if m['role'] == "user":
+                i += 1
+            if i >= num_chat_history:
+                break
+        count += 1
+    # print(chat_history)
+    i = 0
+    combine_history = ""
+    for x in chat_history[::-1]:
+        if i == 0:
+            combine_history += "Here is the chat history for context - \n"
+        combine_history += x
+        i += 1
+    # print("!!!message", combined_message , "message!!!\n\n")
+    request['messages'] = [request['messages'][-1]]
+    request['messages'][0]['content'] = combine_history + query
+    print("!!!messages", request['messages'] , "messages!!!\n\n")
     model_args = prepare_model_args(request)
+    # print("!!!model_args", model_args, "model_args!!!\n\n")
 
     try:
-        azure_openai_client = init_openai_client()
-        response = await azure_openai_client.chat.completions.create(**model_args)
+       if HACKATHON_BACKEND_API:
+            # headers = {'Content-type': 'application/json'}
+            # connection = http.client.HTTPConnection(host=HACKATHON_BACKEND_API, port=80)
+            # print("!!!!!!!!!\n\n", request, "!!!!!!!!!\n\n\n")
+            # response = connection.request('POST', '/query', request)
+            response = requests.post(HACKATHON_BACKEND_API, json=request)
+            # Check the response
+            if response.status_code == 200:
+                print(f"Success! Response content: {response.content.decode('utf-8')}")
+            else:
+                print(f"Error! Status code: {response.status_code}")
+            # response =ChatCompletion(id='chatcmpl-94srCDUFFtQqiBcIlO3ZFtW4ARNwU', choices=[
+            #     Choice(finish_reason='stop', index=0, logprobs=None, message=
+            #        ChatCompletionMessage(content="Hello! It seems like you're testing the system. How can I assist you today? If you have any questions or need information, feel free to ask.", 
+            #                              role='assistant', function_call=None, tool_calls=None), 
+            #                              content_filter_results={'hate': {'filtered': False, 'severity': 'safe'}, 'self_harm': {'filtered': False, 'severity': 'safe'}, 'sexual': {'filtered': False, 'severity': 'safe'}, 
+            #                                                      'violence': {'filtered': False, 'severity': 'safe'}})], created=1710951210, model='gpt-4', object='chat.completion', 
+            #                                                      system_fingerprint='fp_46925cd5d1', usage=CompletionUsage(completion_tokens=32, prompt_tokens=23, total_tokens=55), prompt_filter_results=[{'prompt_index': 0, 'content_filter_results': {'hate': {'filtered': False, 'severity': 'safe'}, 'self_harm': {'filtered': False, 'severity': 'safe'}, 'sexual': {'filtered': False, 'severity': 'safe'}, 'violence': {'filtered': False, 'severity': 'safe'}}}])
+
+        # azure_openai_client = init_openai_client()
+        # response = await azure_openai_client.chat.completions.create(**model_args)
+        # response = {
+        #     "id": "cmpl-4kGh7iXtjW4lc9eGhff6Hp8C7btdQ",
+        #     "object": "text_completion",
+        #     "created": 1646932609,
+        #     "model": "gpt-4",
+        #     "choices": [
+        #         {
+        #             "text": ", a dark line crossed",
+        #             "index": 0,
+        #             "finish_reason": "length"
+        #         }
+        #     ]
+        # }
 
     except Exception as e:
         logging.exception("Exception in send_chat_request")
         raise e
-
     return response
 
 async def complete_chat_request(request_body):
     response = await send_chat_request(request_body)
     history_metadata = request_body.get("history_metadata", {})
 
-    return format_non_streaming_response(response, history_metadata)
+    return format_aoai_backend_response(response, history_metadata)
+
+def format_aoai_backend_response(response, history_metadata, message_uuid=None):
+    # print("!!!response", response, "response!!!\n\n")
+    new_response = json.loads(response.content)
+    # print( "n\n!!! new response", new_response, "new response!!! \n\n")
+    # print( "n\n!!! new response", new_response['result']['choices'][0]['text'], "new response!!! \n\n")
+    response_obj = {
+        "id": new_response['result']['id'],
+        "model": new_response['result']['model'],
+        "created": new_response['result']['created'],
+        "object": new_response['result']['object'],
+        "choices": [
+            {
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "content": new_response['result']['choices'][0]['text'],
+                    }
+                ],
+            }
+        ],
+        "history_metadata": history_metadata
+    }
+
+    # if len(response.choices) > 0:
+    #     message = new_response['result']['choices'][0]['text']
+    #     if message:
+    #         if hasattr(message, "context") and message.context.get("messages"):
+    #             for m in message.context["messages"]:
+    #                 if m["role"] == "tool":
+    #                     response_obj["choices"][0]["messages"].append({
+    #                         "role": "tool",
+    #                         "content": m["content"]
+    #                     })
+    #         elif hasattr(message, "context"):
+    #             response_obj["choices"][0]["messages"].append({
+    #                 "role": "tool",
+    #                 "content": json.dumps(message.context),
+    #             })
+    #         response_obj["choices"][0]["messages"].append({
+    #             "role": "assistant",
+    #             "content": message.content,
+    #         })
+    #         return response_obj
+    # print(response_obj)
+
+    return response_obj
+
 
 async def stream_chat_request(request_body):
     response = await send_chat_request(request_body)
@@ -592,8 +710,9 @@ async def conversation():
     if not request.is_json:
         return jsonify({"error": "request must be json"}), 415
     request_json = await request.get_json()
-    
-    return await conversation_internal(request_json)
+    result = await conversation_internal(request_json)
+    # print("!!Result\n\n", result, "Result!!\n\n")
+    return result
 
 @bp.route("/frontend_settings", methods=["GET"])  
 def get_frontend_settings():
